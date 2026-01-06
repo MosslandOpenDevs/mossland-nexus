@@ -1,0 +1,35 @@
+# ===================================================
+# Moss Nexus - Docker Compose Configuration
+# Qdrant Vector Database 로컬 실행을 위한 설정
+# ===================================================
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: moss_nexus_qdrant
+    restart: unless-stopped
+    ports:
+      # REST API 포트
+      - "6333:6333"
+      # gRPC 포트 (선택사항)
+      - "6334:6334"
+    volumes:
+      # 데이터 영속성을 위한 볼륨 마운트
+      - ./qdrant_storage:/qdrant/storage:z
+    environment:
+      # Qdrant 설정
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      # 성능 최적화 설정
+      - QDRANT__STORAGE__ON_DISK_PAYLOAD=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# 네트워크 설정 (선택사항)
+networks:
+  default:
+    name: moss_nexus_network

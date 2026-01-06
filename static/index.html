@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Moss Nexus - AI 거버넌스 어시스턴트</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <span class="logo-icon">🌿</span>
+                    <h1>Moss Nexus</h1>
+                </div>
+                <p class="tagline">모스랜드 AI 거버넌스 어시스턴트</p>
+            </div>
+            <div class="header-status">
+                <span id="status-indicator" class="status-dot"></span>
+                <span id="status-text">연결 중...</span>
+            </div>
+        </header>
+
+        <!-- Chat Container -->
+        <main class="chat-container">
+            <div id="chat-messages" class="chat-messages">
+                <!-- Welcome Message -->
+                <div class="message assistant-message">
+                    <div class="message-avatar">🌿</div>
+                    <div class="message-content">
+                        <div class="message-text">
+                            안녕하세요! 저는 <strong>Moss Nexus</strong>입니다.<br><br>
+                            모스랜드에 대해 궁금한 것이 있으시면 무엇이든 물어보세요.
+                            공식 문서를 기반으로 정확한 답변을 드리겠습니다.
+                        </div>
+                        <div class="message-time">지금</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Input Area -->
+        <footer class="input-container">
+            <form id="chat-form" class="chat-form">
+                <div class="input-wrapper">
+                    <textarea
+                        id="question-input"
+                        placeholder="모스랜드에 대해 질문해주세요..."
+                        rows="1"
+                        maxlength="1000"
+                    ></textarea>
+                    <button type="submit" id="send-button" class="send-button" disabled>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+                <div class="input-footer">
+                    <span class="char-count"><span id="char-count">0</span>/1000</span>
+                    <span class="hint">Enter로 전송, Shift+Enter로 줄바꿈</span>
+                </div>
+            </form>
+        </footer>
+    </div>
+
+    <!-- Source Modal -->
+    <div id="source-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📄 참조 문서</h3>
+                <button class="modal-close" onclick="closeSourceModal()">&times;</button>
+            </div>
+            <div id="source-list" class="source-list">
+                <!-- Sources will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
