@@ -8,11 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
-- FastAPI REST endpoint for web integration
 - Slack bot integration
 - Multi-language document support
 - Document update detection (incremental indexing)
-- Web UI dashboard
+- Authentication & rate limiting for API
+- Query result caching (Redis)
 
 ---
 
@@ -25,6 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Text chunking with RecursiveCharacterTextSplitter (800 chars, 100 overlap)
   - Vector embeddings using BAAI/bge-m3 with MPS acceleration
   - Qdrant vector database integration
+- **Web UI**
+  - Modern chat interface with responsive design
+  - Real-time typing indicator and loading animation
+  - Source document modal for reference checking
+  - Processing time display
+  - Mobile-friendly layout
+- **REST API (FastAPI)**
+  - `POST /api/query` - Question answering with sources
+  - `POST /api/search` - Document search only
+  - `GET /api/health` - System health check
+  - Swagger documentation at `/docs`
+  - CORS support for cross-origin requests
 - **Discord Bot Interface**
   - `!ask` command for Q&A with source citations
   - `!search` command for document search only
@@ -40,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pydantic-based settings with .env support
   - Configurable chunk size, overlap, and top-k retrieval
 - **CLI Interface**
+  - `python main.py api` - Run Web UI & API server
   - `python main.py bot` - Run Discord bot
   - `python main.py ingest` - Index documents
   - `python main.py test` - Interactive CLI mode
@@ -61,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| 1.0.0 | 2025-01-07 | Initial release with RAG pipeline and Discord bot |
+| 1.0.0 | 2025-01-07 | Initial release with RAG pipeline, Web UI, REST API, Discord bot |
 
 ---
 

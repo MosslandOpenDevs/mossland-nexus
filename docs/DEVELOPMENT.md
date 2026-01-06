@@ -120,7 +120,15 @@ mossland-nexus/
 │   ├── config.py         # Pydantic settings
 │   ├── ingest.py         # Document ingestion pipeline
 │   ├── rag_chain.py      # RAG retrieval & generation
+│   ├── api.py            # FastAPI REST API & Web server
 │   └── bot.py            # Discord bot interface
+│
+├── static/               # Web UI assets
+│   ├── index.html        # Main chat interface
+│   ├── css/
+│   │   └── style.css     # UI styles
+│   └── js/
+│       └── app.js        # Chat logic
 │
 ├── data/                  # Document storage
 │   └── *.pdf, *.md, *.txt
@@ -147,6 +155,7 @@ mossland-nexus/
 | `src/config.py` | Centralized configuration using Pydantic Settings |
 | `src/ingest.py` | Loads documents, chunks them, stores in Qdrant |
 | `src/rag_chain.py` | Retrieves relevant docs, generates answers via LLM |
+| `src/api.py` | FastAPI server with REST endpoints and Web UI |
 | `src/bot.py` | Discord bot commands and event handlers |
 
 ---
@@ -162,6 +171,18 @@ export LOG_LEVEL=DEBUG
 
 # Run CLI test mode
 python main.py test
+```
+
+### Web API Server (Development)
+
+```bash
+# Run with debug logging
+LOG_LEVEL=DEBUG python main.py api
+
+# Access points:
+# - Web UI: http://localhost:8000
+# - API Docs: http://localhost:8000/docs
+# - Health: http://localhost:8000/api/health
 ```
 
 ### Discord Bot (Development)
@@ -391,6 +412,62 @@ async def help_korean(ctx: commands.Context):
     embed.add_field(name="!status", value="시스템 상태를 확인합니다", inline=False)
 
     await ctx.send(embed=embed)
+```
+
+### Adding a New API Endpoint
+
+```python
+# src/api.py
+
+from pydantic import BaseModel
+
+# Define request/response models
+class SummaryRequest(BaseModel):
+    document_id: str
+
+class SummaryResponse(BaseModel):
+    summary: str
+    document_id: str
+
+# Add new endpoint
+@app.post("/api/summary", response_model=SummaryResponse)
+async def get_document_summary(request: SummaryRequest):
+    """
+    Generate a summary for a specific document.
+    """
+    # Your implementation here
+    return SummaryResponse(
+        summary="Document summary...",
+        document_id=request.document_id
+    )
+```
+
+### Modifying the Web UI
+
+```javascript
+// static/js/app.js
+
+// Add new function for custom feature
+async function fetchSummary(documentId) {
+    const response = await fetch('/api/summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_id: documentId })
+    });
+    return await response.json();
+}
+```
+
+```css
+/* static/css/style.css */
+
+/* Add custom styles */
+.summary-card {
+    padding: var(--spacing-md);
+    background-color: var(--color-bg);
+    border-radius: var(--radius-md);
+    border-left: 3px solid var(--color-primary);
+}
 ```
 
 ### Modifying the System Prompt

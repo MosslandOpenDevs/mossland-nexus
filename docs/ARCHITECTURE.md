@@ -29,17 +29,20 @@ Moss Nexus is designed as a fully local AI assistant that runs entirely on Apple
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                              User Interface                              │
+│                              User Interfaces                             │
 │                                                                         │
-│   ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐  │
-│   │  Discord Bot    │     │   CLI Interface │     │  (Future) API   │  │
-│   │    (bot.py)     │     │   (main.py)     │     │   (FastAPI)     │  │
-│   └────────┬────────┘     └────────┬────────┘     └────────┬────────┘  │
-└────────────┼───────────────────────┼───────────────────────┼───────────┘
-             │                       │                       │
-             └───────────────────────┼───────────────────────┘
-                                     │
-                                     ▼
+│   ┌─────────────────┐  ┌─────────────────┐  ┌───────────────────────┐  │
+│   │    Web UI       │  │  Discord Bot    │  │    REST API           │  │
+│   │  (Browser)      │  │   (bot.py)      │  │   (api.py)            │  │
+│   │                 │  │                 │  │                       │  │
+│   │ static/         │  │ !ask, !search   │  │ /api/query            │  │
+│   │ index.html      │  │ !status, !ping  │  │ /api/search           │  │
+│   └────────┬────────┘  └────────┬────────┘  └───────────┬───────────┘  │
+└────────────┼───────────────────┼────────────────────────┼──────────────┘
+             │                   │                        │
+             └───────────────────┼────────────────────────┘
+                                 │
+                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                            Core RAG Engine                               │
 │                           (rag_chain.py)                                 │
@@ -206,7 +209,57 @@ Core retrieval and generation logic.
 3. Enables fact-checking via source citations
 4. Optimized for Korean community
 
-### 4. Discord Bot (`src/bot.py`)
+### 4. Web UI & REST API (`src/api.py`)
+
+FastAPI-based web interface and REST API.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     FastAPI Application                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Endpoints:                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ GET  /           ──▶ Serve Web UI (static/index.html)       ││
+│  │ POST /api/query  ──▶ RAG query ──▶ JSON response            ││
+│  │ POST /api/search ──▶ Document search ──▶ JSON response      ││
+│  │ GET  /api/health ──▶ System status check                    ││
+│  │ GET  /docs       ──▶ Swagger API documentation              ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                 │
+│  Web UI Features (static/):                                     │
+│  ├─ Modern chat interface (index.html)                          │
+│  ├─ Responsive CSS design (css/style.css)                       │
+│  ├─ Real-time JavaScript logic (js/app.js)                      │
+│  ├─ Typing indicator & loading animation                        │
+│  ├─ Source document modal                                       │
+│  └─ Processing time display                                     │
+│                                                                 │
+│  API Features:                                                  │
+│  ├─ Pydantic request/response models                            │
+│  ├─ CORS middleware for cross-origin requests                   │
+│  ├─ Async request handling with run_in_executor                 │
+│  └─ Lifespan management for RAG chain initialization            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Request/Response Models:**
+
+```python
+# Query Request
+class QueryRequest(BaseModel):
+    question: str  # 1-1000 characters
+
+# Query Response
+class QueryResponse(BaseModel):
+    answer: str
+    sources: List[SourceDocument]
+    query: str
+    processing_time: float
+```
+
+### 5. Discord Bot (`src/bot.py`)
 
 User interface layer.
 
