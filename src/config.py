@@ -35,7 +35,7 @@ class Settings(BaseSettings):
         description="Ollama 서버 URL"
     )
     ollama_model: str = Field(
-        default="llama3.3:70b",
+        default="qwen3.5:9b",
         description="사용할 Ollama 모델명"
     )
 
