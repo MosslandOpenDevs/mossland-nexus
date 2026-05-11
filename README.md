@@ -25,6 +25,10 @@
 
 *Nexus* means "connection" or "center" — representing the central hub where all Mossland knowledge connects.
 
+### Cloud-hosted sibling
+
+For an externally-hosted RAG surface over Korean crypto / macro narratives (not just Mossland docs), see [Alpha](https://alpha.moss.land?utm_source=github&utm_medium=referral&utm_campaign=nexus-readme) — alpha.moss.land — with a free public 12-tool MCP server at [`/api/mcp`](https://alpha.moss.land/api/mcp) ([repo](https://github.com/MosslandOpenDevs/alpha) · [MCP catalog entry](https://github.com/MosslandOpenDevs/alpha-mcp)).
+
 ## Features
 
 - **100% Local Execution**: No OpenAI or external API calls. Everything runs on your Mac.
