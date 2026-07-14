@@ -1,291 +1,292 @@
 # ===================================================
-# Moss Nexus - RAG Chain Module
-# 검색 증강 생성(Retrieval-Augmented Generation) 체인
+# Moss Nexus - RAG Module
+# 하이브리드 검색(dense+sparse RRF) + 로컬 LLM 생성
 # ===================================================
 """
-이 모듈은 RAG 시스템의 핵심 로직을 구현합니다.
+RAG 파이프라인 (LangChain 미사용):
 
-RAG 파이프라인:
-1. 사용자 질문을 벡터로 변환
-2. Qdrant에서 유사한 문서 검색
-3. 검색된 문서를 컨텍스트로 LLM에 전달
-4. LLM이 컨텍스트 기반 답변 생성
+1. 질문을 BGE-M3로 dense + sparse 임베딩
+2. Qdrant에서 dense(의미) / sparse(어휘) 병렬 검색
+3. RRF(Reciprocal Rank Fusion)로 융합, 상위 K개 선택
+   - dense 검색에는 최소 유사도 임계값 적용
+   - 근거가 없으면 LLM을 호출하지 않고 "찾을 수 없음" 응답
+4. Ollama LLM이 컨텍스트 기반 답변 생성
+5. 출처는 LLM이 아니라 백엔드가 검색 메타데이터에서 조립
 """
 
-import sys
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Qdrant
-from langchain_community.llms import Ollama
-from langchain.prompts import PromptTemplate
-from langchain.chains import RetrievalQA
-from langchain.schema import Document
-from qdrant_client import QdrantClient
+import ollama
 from loguru import logger
+from qdrant_client import QdrantClient
+from qdrant_client import models as qdrant_models
 
 from src.config import settings
+from src.logging_setup import setup_logging
+
+setup_logging()
 
 
 # ─────────────────────────────────────────────────
-# 로깅 설정
+# 시스템 프롬프트
 # ─────────────────────────────────────────────────
-logger.remove()
-logger.add(
-    sys.stderr,
-    level=settings.log_level,
-    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
-)
-
-
-# ─────────────────────────────────────────────────
-# 시스템 프롬프트 템플릿
-# ─────────────────────────────────────────────────
-SYSTEM_PROMPT_TEMPLATE = """당신은 모스랜드(Mossland)의 커뮤니티 매니저 'Moss Nexus'입니다.
-아래의 [Context]를 바탕으로 사용자의 질문에 친절하고 명확하게 답변하세요.
+SYSTEM_PROMPT = """당신은 모스랜드(Mossland) 문서를 검색해 답변하는 어시스턴트 'Moss Nexus'입니다.
 
 [Rules]
 1. 반드시 [Context]에 있는 내용만 사실로 간주하고 답변하세요.
-2. [Context]에 없는 내용은 "죄송하지만, 제공된 공식 문서에서 해당 정보를 찾을 수 없습니다."라고 답하세요. 추측하지 마세요.
-3. 답변 끝에는 반드시 참조한 문서의 파일명이나 출처를 [Source: 파일명] 형식으로 남기세요.
-4. 한국어로 답변하세요.
+2. 근거가 없으면 "죄송하지만, 색인된 문서에서 해당 정보를 찾을 수 없습니다."라고 답하세요.
+3. 추측하거나 일반 지식으로 보완하지 마세요.
+4. 답변 문장의 근거가 된 문서 번호를 [1], [2] 형식으로 표기하세요.
+5. 한국어로 답변하세요."""
 
-[Context]
-{context}
+NO_RESULT_ANSWER = "죄송하지만, 색인된 문서에서 관련 정보를 찾을 수 없습니다."
 
-[Question]
-{question}
 
-[Answer]
-"""
+@dataclass
+class RetrievedChunk:
+    """검색된 문서 청크 (출처 메타데이터 포함)"""
+    filename: str
+    source: str
+    content: str
+    chunk_index: int | None = None
+    page: int | None = None
+    score: float = 0.0          # RRF 융합 점수
+    dense_score: float | None = None  # 코사인 유사도 (dense 결과에만 존재)
+    content_hash: str | None = None
+    ingested_at: str | None = None
 
 
 @dataclass
 class RAGResponse:
     """
-    RAG 응답 데이터 클래스
+    RAG 응답
 
     Attributes:
         answer: LLM이 생성한 답변
-        source_documents: 검색된 참조 문서 리스트
+        sources: 검색된 근거 청크 리스트 (백엔드가 조립한 출처)
         query: 원본 사용자 질문
     """
     answer: str
-    source_documents: List[Document]
+    sources: list[RetrievedChunk]
     query: str
+
+
+def rrf_merge(result_lists: list[list], k: int = 60) -> list[tuple]:
+    """
+    Reciprocal Rank Fusion.
+
+    Args:
+        result_lists: 랭킹 리스트들 (각 원소는 .id 속성을 가진 객체)
+        k: RRF 상수 (기본 60)
+
+    Returns:
+        (item, fused_score) 리스트 — 융합 점수 내림차순
+    """
+    scores: dict = {}
+    items: dict = {}
+    for results in result_lists:
+        for rank, item in enumerate(results):
+            scores[item.id] = scores.get(item.id, 0.0) + 1.0 / (k + rank + 1)
+            items.setdefault(item.id, item)
+
+    ranked = sorted(scores.items(), key=lambda pair: pair[1], reverse=True)
+    return [(items[item_id], score) for item_id, score in ranked]
 
 
 class RAGChain:
     """
-    RAG(검색 증강 생성) 체인 클래스
+    하이브리드 검색 + 생성 파이프라인
 
-    이 클래스는 다음 기능을 제공합니다:
-    1. Qdrant 벡터 DB에서 관련 문서 검색
-    2. Ollama LLM을 사용한 답변 생성
-    3. 출처 정보와 함께 응답 반환
+    Args:
+        embedder: 주입 가능한 임베더 (테스트용)
+        client: 주입 가능한 Qdrant 클라이언트 (테스트용)
+        llm: 주입 가능한 ollama.Client (테스트용)
     """
 
-    def __init__(self):
-        """
-        RAGChain 초기화
-        임베딩 모델, 벡터 스토어, LLM을 설정합니다.
-        """
+    def __init__(self, embedder=None, client: QdrantClient | None = None, llm=None):
         logger.info("RAGChain 초기화 중...")
 
-        # ─────────────────────────────────────────────────
-        # 임베딩 모델 초기화 (MPS 가속)
-        # ─────────────────────────────────────────────────
-        logger.info(f"임베딩 모델 로드: {settings.embedding_model}")
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=settings.embedding_model,
-            model_kwargs={
-                'device': 'mps',  # Apple Silicon GPU 가속
-                'trust_remote_code': True
-            },
-            encode_kwargs={
-                'normalize_embeddings': True
-            }
-        )
+        if embedder is None:
+            from src.embeddings import BGEM3Embedder
+            embedder = BGEM3Embedder()
+        self.embedder = embedder
 
-        # ─────────────────────────────────────────────────
-        # Qdrant 벡터 스토어 연결
-        # ─────────────────────────────────────────────────
-        logger.info(f"Qdrant 연결: {settings.qdrant_url}")
-        self.qdrant_client = QdrantClient(
+        self.client = client or QdrantClient(
             host=settings.qdrant_host,
-            port=settings.qdrant_port
+            port=settings.qdrant_port,
+        )
+        # timeout: Ollama가 응답 불능일 때 워커 스레드가 무한 대기하지 않도록 제한
+        self.llm = llm or ollama.Client(
+            host=settings.ollama_base_url,
+            timeout=settings.query_timeout_seconds,
         )
 
-        # 컬렉션 존재 확인
+        # 컬렉션(alias) 존재 확인 — 없으면 경고만 (ingest 안내)
         try:
-            collection_info = self.qdrant_client.get_collection(
-                settings.qdrant_collection_name
+            count = self.client.count(
+                collection_name=settings.qdrant_collection_name, exact=True
+            ).count
+            logger.info(
+                f"컬렉션 '{settings.qdrant_collection_name}' 연결됨 (포인트 수: {count})"
             )
-            logger.info(f"컬렉션 '{settings.qdrant_collection_name}' 연결됨 "
-                       f"(포인트 수: {collection_info.points_count})")
-        except Exception as e:
-            logger.warning(f"컬렉션이 존재하지 않습니다. ingest.py를 먼저 실행해주세요: {e}")
+        except Exception:
+            logger.warning(
+                f"컬렉션 '{settings.qdrant_collection_name}'이 없습니다. "
+                f"'python main.py ingest'를 먼저 실행해주세요."
+            )
 
-        # LangChain Qdrant 래퍼 초기화
-        self.vectorstore = Qdrant(
-            client=self.qdrant_client,
-            collection_name=settings.qdrant_collection_name,
-            embeddings=self.embeddings
-        )
+        logger.info("RAGChain 초기화 완료")
 
-        # ─────────────────────────────────────────────────
-        # Retriever 설정
-        # ─────────────────────────────────────────────────
-        # 유사도 상위 K개 문서를 검색하는 Retriever
-        self.retriever = self.vectorstore.as_retriever(
-            search_type="similarity",
-            search_kwargs={
-                "k": settings.top_k_results  # 기본 4개
-            }
-        )
-
-        # ─────────────────────────────────────────────────
-        # Ollama LLM 초기화
-        # ─────────────────────────────────────────────────
-        logger.info(f"Ollama LLM 초기화: {settings.ollama_model}")
-        self.llm = Ollama(
-            base_url=settings.ollama_base_url,
-            model=settings.ollama_model,
-            temperature=0.1,  # 낮은 temperature로 일관된 답변 생성
-            num_ctx=8192,     # 컨텍스트 윈도우 크기
-            num_predict=2048,  # 최대 생성 토큰 수
-        )
-
-        # ─────────────────────────────────────────────────
-        # 프롬프트 템플릿 설정
-        # ─────────────────────────────────────────────────
-        self.prompt = PromptTemplate(
-            template=SYSTEM_PROMPT_TEMPLATE,
-            input_variables=["context", "question"]
-        )
-
-        # ─────────────────────────────────────────────────
-        # RetrievalQA 체인 구성
-        # ─────────────────────────────────────────────────
-        self.qa_chain = RetrievalQA.from_chain_type(
-            llm=self.llm,
-            chain_type="stuff",  # 모든 문서를 하나의 프롬프트에 넣기
-            retriever=self.retriever,
-            return_source_documents=True,  # 출처 문서 반환
-            chain_type_kwargs={
-                "prompt": self.prompt
-            }
-        )
-
-        logger.info("RAGChain 초기화 완료!")
-
-    def _format_sources(self, documents: List[Document]) -> str:
+    # ─────────────────────────────────────────────────
+    # 검색
+    # ─────────────────────────────────────────────────
+    def search(self, query: str, k: int | None = None) -> list[RetrievedChunk]:
         """
-        검색된 문서들의 출처 정보를 포맷팅합니다.
-
-        Args:
-            documents: 검색된 문서 리스트
-
-        Returns:
-            str: 포맷팅된 출처 문자열
+        하이브리드 검색: dense(임계값 적용) + sparse → RRF 융합 → 상위 K개
         """
-        if not documents:
-            return ""
+        if k is None:
+            k = settings.top_k_results
+        collection = settings.qdrant_collection_name
+        candidates = settings.retrieval_candidates
 
-        sources = set()
-        for doc in documents:
-            filename = doc.metadata.get('filename', '')
-            if filename:
-                sources.add(filename)
+        encoded = self.embedder.encode([query])
+        dense_vec = encoded.dense[0]
+        sparse_vec = encoded.sparse[0]
 
-        if sources:
-            return "\n\n[참조 문서: " + ", ".join(sorted(sources)) + "]"
-        return ""
+        dense_hits = self.client.query_points(
+            collection_name=collection,
+            query=dense_vec,
+            using="dense",
+            limit=candidates,
+            score_threshold=settings.min_dense_score,
+            with_payload=True,
+        ).points
 
-    async def aquery(self, question: str) -> RAGResponse:
-        """
-        비동기 질문 처리 메서드
+        sparse_hits = []
+        if sparse_vec:
+            sparse_hits = self.client.query_points(
+                collection_name=collection,
+                query=qdrant_models.SparseVector(
+                    indices=list(sparse_vec.keys()),
+                    values=list(sparse_vec.values()),
+                ),
+                using="sparse",
+                limit=candidates,
+                with_payload=True,
+            ).points
 
-        Discord 봇에서 비동기로 호출하기 위한 래퍼 메서드입니다.
+        dense_scores = {hit.id: hit.score for hit in dense_hits}
+        merged = rrf_merge([dense_hits, sparse_hits])
 
-        Args:
-            question: 사용자 질문
+        chunks = []
+        for point, fused_score in merged[:k]:
+            payload = point.payload or {}
+            chunks.append(RetrievedChunk(
+                filename=payload.get("filename", "unknown"),
+                source=payload.get("source", "unknown"),
+                content=payload.get("text", ""),
+                chunk_index=payload.get("chunk_index"),
+                page=payload.get("page"),
+                score=fused_score,
+                dense_score=dense_scores.get(point.id),
+                content_hash=payload.get("content_hash"),
+                ingested_at=payload.get("ingested_at"),
+            ))
+        return chunks
 
-        Returns:
-            RAGResponse: 답변, 출처 문서, 원본 질문을 포함한 응답
-        """
-        return self.query(question)
+    # ─────────────────────────────────────────────────
+    # 생성
+    # ─────────────────────────────────────────────────
+    def _build_context(self, chunks: list[RetrievedChunk]) -> str:
+        """검색 결과를 번호가 매겨진 컨텍스트 블록으로 조립합니다."""
+        blocks = []
+        for i, chunk in enumerate(chunks, start=1):
+            locator = chunk.filename
+            if chunk.page:
+                locator += f", p.{chunk.page}"
+            blocks.append(f"[{i}] ({locator})\n{chunk.content}")
+        return "\n\n".join(blocks)
 
     def query(self, question: str) -> RAGResponse:
         """
         질문에 대한 답변을 생성합니다.
 
-        RAG 파이프라인:
-        1. 질문을 벡터로 변환
-        2. Qdrant에서 유사 문서 검색
-        3. 검색된 문서를 컨텍스트로 LLM에 전달
-        4. LLM이 답변 생성
-
-        Args:
-            question: 사용자 질문
-
-        Returns:
-            RAGResponse: 답변, 출처 문서, 원본 질문을 포함한 응답
+        근거 문서가 없으면 LLM을 호출하지 않고 즉시 "찾을 수 없음"을 반환합니다.
+        LLM/DB 오류는 예외로 전파됩니다 — 호출자(API/봇)가 사용자에게
+        일반화된 오류 메시지를 보여줄 책임을 가집니다.
         """
-        logger.info(f"질문 수신: {question[:50]}...")
+        chunks = self.search(question)
+        logger.info(f"검색된 근거 청크: {len(chunks)}개")
+
+        if not chunks:
+            return RAGResponse(answer=NO_RESULT_ANSWER, sources=[], query=question)
+
+        context = self._build_context(chunks)
+        user_prompt = f"[Context]\n{context}\n\n[Question]\n{question}"
+
+        response = self.llm.chat(
+            model=settings.ollama_model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            options={
+                "temperature": settings.ollama_temperature,
+                "num_ctx": settings.ollama_num_ctx,
+                "num_predict": settings.ollama_num_predict,
+            },
+        )
+        answer = response["message"]["content"].strip()
+
+        return RAGResponse(answer=answer, sources=chunks, query=question)
+
+    # ─────────────────────────────────────────────────
+    # 상태 확인
+    # ─────────────────────────────────────────────────
+    def health(self) -> dict:
+        """
+        실제 의존성(Qdrant, Ollama, 컬렉션, 모델)의 상태를 확인합니다.
+        """
+        status: dict = {
+            "qdrant": False,
+            "collection_points": None,
+            "ollama": False,
+            "model_available": False,
+        }
 
         try:
-            # RetrievalQA 체인 실행
-            result = self.qa_chain.invoke({"query": question})
-
-            answer = result.get("result", "답변을 생성할 수 없습니다.")
-            source_documents = result.get("source_documents", [])
-
-            # 로그에 검색된 문서 정보 출력
-            logger.info(f"검색된 문서 수: {len(source_documents)}")
-            for i, doc in enumerate(source_documents):
-                filename = doc.metadata.get('filename', 'unknown')
-                logger.debug(f"  [{i+1}] {filename}")
-
-            return RAGResponse(
-                answer=answer,
-                source_documents=source_documents,
-                query=question
-            )
-
+            self.client.get_collections()
+            status["qdrant"] = True
+            status["collection_points"] = self.client.count(
+                collection_name=settings.qdrant_collection_name, exact=True
+            ).count
         except Exception as e:
-            logger.error(f"질문 처리 중 오류: {e}")
-            return RAGResponse(
-                answer=f"죄송합니다. 질문 처리 중 오류가 발생했습니다: {str(e)}",
-                source_documents=[],
-                query=question
+            logger.warning(f"Qdrant 상태 확인 실패: {type(e).__name__}")
+
+        try:
+            listed = self.llm.list()
+            status["ollama"] = True
+            model_names = [m.model for m in listed.models]
+            status["model_available"] = any(
+                name == settings.ollama_model
+                or name.split(":")[0] == settings.ollama_model
+                for name in model_names
             )
+        except Exception as e:
+            logger.warning(f"Ollama 상태 확인 실패: {type(e).__name__}")
 
-    def search_documents(self, query: str, k: int = None) -> List[Document]:
-        """
-        질문과 관련된 문서를 검색합니다 (답변 생성 없이).
-
-        디버깅이나 문서 검색 확인용으로 사용합니다.
-
-        Args:
-            query: 검색 쿼리
-            k: 반환할 문서 수 (기본값: settings.top_k_results)
-
-        Returns:
-            List[Document]: 검색된 문서 리스트
-        """
-        if k is None:
-            k = settings.top_k_results
-
-        documents = self.vectorstore.similarity_search(query, k=k)
-        return documents
+        status["healthy"] = bool(
+            status["qdrant"]
+            and status["ollama"]
+            and status["collection_points"] is not None
+        )
+        return status
 
 
 # ─────────────────────────────────────────────────
 # 싱글톤 인스턴스 (지연 초기화)
 # ─────────────────────────────────────────────────
-_rag_chain_instance: Optional[RAGChain] = None
+_rag_chain_instance: RAGChain | None = None
 
 
 def get_rag_chain() -> RAGChain:
@@ -294,9 +295,6 @@ def get_rag_chain() -> RAGChain:
 
     최초 호출 시 인스턴스를 생성하고, 이후 호출에서는
     기존 인스턴스를 재사용합니다.
-
-    Returns:
-        RAGChain: RAG 체인 인스턴스
     """
     global _rag_chain_instance
 
@@ -304,30 +302,3 @@ def get_rag_chain() -> RAGChain:
         _rag_chain_instance = RAGChain()
 
     return _rag_chain_instance
-
-
-# ─────────────────────────────────────────────────
-# 테스트용 메인 함수
-# ─────────────────────────────────────────────────
-if __name__ == "__main__":
-    # RAG 체인 초기화
-    rag = get_rag_chain()
-
-    # 테스트 질문
-    test_questions = [
-        "모스랜드는 어떤 프로젝트인가요?",
-        "MOC 토큰의 총 발행량은 얼마인가요?",
-    ]
-
-    for question in test_questions:
-        print(f"\n{'='*50}")
-        print(f"질문: {question}")
-        print("="*50)
-
-        response = rag.query(question)
-        print(f"\n답변:\n{response.answer}")
-
-        if response.source_documents:
-            print(f"\n참조 문서:")
-            for doc in response.source_documents:
-                print(f"  - {doc.metadata.get('filename', 'unknown')}")

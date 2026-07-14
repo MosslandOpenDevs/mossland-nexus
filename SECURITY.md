@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
+| 2.0.x   | :white_check_mark: |
+| 1.0.x   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -136,20 +137,23 @@ safety check
 └─────────────────────────────────────────────────────┘
 ```
 
-### What's Protected
+### What's Protected (v2.0 defaults)
 
 | Asset | Protection |
 |-------|------------|
 | Discord Token | Environment variable, never logged |
-| User Queries | Processed locally, not stored |
-| Documents | Local filesystem, no cloud upload |
-| Embeddings | Stored in local Qdrant only |
+| User Queries | Processed locally; question text and usernames are not logged |
+| Documents | Local filesystem, `data/` git-ignored, no cloud upload |
+| Embeddings | Stored in local Qdrant only (loopback-bound) |
 | LLM Inference | Local Ollama, no external API |
+| API surface | Binds to `127.0.0.1`; CORS restricted to local origins |
+| Error output | Generic messages to users; details only in server logs |
+| Load | Global concurrency limit, queue/query timeouts, per-user Discord cooldown |
 
-### What's NOT Protected (v1.0)
+### What's NOT Protected (v2.0)
 
-- No authentication for CLI access
-- No rate limiting on queries
+- No authentication layer on the API itself — external exposure must go
+  behind a reverse proxy with TLS + auth (or Tailscale-style private network)
 - No encryption at rest for Qdrant data
 - No audit logging
 
@@ -178,9 +182,9 @@ safety check
 **Risk**: Over-privileged bot could be exploited.
 
 **Mitigation**:
-- Request minimal permissions
-- Only enable `message_content` intent
-- Limit to specific channels if needed
+- Slash commands only — no privileged intents (`message_content` is NOT required)
+- Guild/channel allowlists via `DISCORD_GUILD_IDS` / `DISCORD_CHANNEL_IDS`
+- Per-user cooldown via `DISCORD_COOLDOWN_SECONDS`
 
 ## Security Checklist
 

@@ -46,7 +46,7 @@ Before you begin, ensure you have:
    ```
 3. Add the upstream remote:
    ```bash
-   git remote add upstream https://github.com/mossland/mossland-nexus.git
+   git remote add upstream https://github.com/MosslandOpenDevs/mossland-nexus.git
    ```
 
 ## How Can I Contribute?
@@ -83,7 +83,7 @@ Good first issues are labeled with `good first issue`. These are great starting 
 
 Areas where we especially welcome contributions:
 
-- **New document loaders** (DOCX, HTML, etc.)
+- **New document loaders** (HTML, CSV, etc. — PDF/MD/TXT/DOCX are built in)
 - **Additional LLM providers** (local alternatives)
 - **Performance optimizations**
 - **Test coverage**
@@ -92,30 +92,19 @@ Areas where we especially welcome contributions:
 
 ## Development Setup
 
-### 1. Create Virtual Environment
+### 1. Install Dependencies
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-```
+# uv (recommended) — installs runtime + dev dependencies from the lockfile
+uv sync --all-groups
 
-### 2. Install Dependencies
-
-```bash
+# pip fallback
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-
-# Install development dependencies
-pip install pytest pytest-asyncio black isort mypy ruff
+pip install pytest pytest-asyncio ruff httpx
 ```
 
-### 3. Set Up Pre-commit Hooks (Optional)
-
-```bash
-pip install pre-commit
-pre-commit install
-```
-
-### 4. Start Services
+### 2. Start Services
 
 ```bash
 # Start Qdrant
@@ -125,14 +114,11 @@ docker-compose up -d
 ollama serve
 ```
 
-### 5. Run Tests
+### 3. Run Tests
 
 ```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=src --cov-report=html
+uv run pytest          # all tests (fast — no model downloads required)
+uv run ruff check .    # lint (CI-enforced)
 ```
 
 ## Style Guidelines
@@ -142,10 +128,11 @@ pytest --cov=src --cov-report=html
 We follow [PEP 8](https://pep8.org/) with some modifications:
 
 - **Line length**: 100 characters max
-- **Imports**: Use `isort` for sorting
-- **Formatting**: Use `black` for code formatting
+- **Lint/format**: `ruff` (configured in `pyproject.toml`, enforced in CI)
 - **Type hints**: Required for public functions
 - **Docstrings**: Google style docstrings
+- **Privacy rule**: never log question text or usernames — request IDs,
+  latency, and source counts only
 
 ```python
 def process_document(
@@ -174,15 +161,8 @@ def process_document(
 ### Linting Commands
 
 ```bash
-# Format code
-black src/ tests/
-isort src/ tests/
-
-# Check types
-mypy src/
-
-# Lint
-ruff check src/
+uv run ruff check .          # lint
+uv run ruff check . --fix    # auto-fix
 ```
 
 ### Commit Message Format
@@ -270,17 +250,26 @@ Your PR should:
 ```
 mossland-nexus/
 ├── src/
-│   ├── __init__.py      # Package init
-│   ├── config.py        # Configuration management
-│   ├── ingest.py        # Document ingestion
-│   ├── rag_chain.py     # RAG pipeline
-│   └── bot.py           # Discord bot
-├── tests/               # Test files
+│   ├── config.py        # Pydantic settings
+│   ├── logging_setup.py # Central logging (privacy rules)
+│   ├── loaders.py       # PDF/MD/TXT/DOCX loaders
+│   ├── splitter.py      # Text chunking
+│   ├── embeddings.py    # BGE-M3 dense+sparse
+│   ├── ingest.py        # Staging → verify → alias swap
+│   ├── rag_chain.py     # Hybrid retrieval + generation
+│   ├── api.py           # FastAPI server
+│   └── bot.py           # Discord slash commands
+├── tests/               # pytest suite
+│   ├── test_api.py
+│   ├── test_bot_utils.py
+│   ├── test_config.py
 │   ├── test_ingest.py
-│   ├── test_rag_chain.py
-│   └── test_bot.py
+│   ├── test_loaders.py
+│   ├── test_rrf.py
+│   └── test_splitter.py
 ├── docs/                # Documentation
-├── data/                # Document storage
+├── fixtures/            # Sample corpora (official / synthetic)
+├── data/                # Document storage (git-ignored)
 └── main.py              # Entry point
 ```
 
