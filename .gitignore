@@ -50,8 +50,11 @@ logs/
 # Qdrant Storage (Docker volume)
 qdrant_storage/
 
-# Data (선택적으로 포함/제외)
-# data/
+# Data — 내부 문서가 실수로 커밋되지 않도록 기본 무시
+# (샘플 문서는 fixtures/ 에서 관리합니다. data/에는 README도 두지 않습니다 —
+#  ingest가 data/의 모든 .md를 색인하기 때문)
+data/*
+!data/.gitkeep
 
 # HuggingFace Cache
 .cache/

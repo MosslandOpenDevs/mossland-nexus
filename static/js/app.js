@@ -200,9 +200,7 @@ function addMessage(type, content, sources = [], processingTime = null) {
         `;
     } else {
         const sourceButton = sources.length > 0
-            ? `<button class="source-button" onclick="showSources(${chatMessages.children.length})">
-                 📄 참조 문서 ${sources.length}개
-               </button>`
+            ? `<button class="source-button">📄 참조 문서 ${sources.length}개</button>`
             : '';
 
         const processingTimeHtml = processingTime
@@ -219,8 +217,16 @@ function addMessage(type, content, sources = [], processingTime = null) {
             </div>
         `;
 
-        // Store sources for this message
-        messageDiv.dataset.sources = JSON.stringify(sources);
+        // 출처 버튼에 이 메시지의 sources를 직접 바인딩
+        // (인덱스 기반 조회는 메시지가 쌓이면 어긋나는 버그가 있었음)
+        if (sources.length > 0) {
+            const button = messageDiv.querySelector('.source-button');
+            button.addEventListener('click', () => {
+                currentSources = sources;
+                renderSources();
+                sourceModal.classList.add('active');
+            });
+        }
     }
 
     chatMessages.appendChild(messageDiv);
@@ -279,36 +285,25 @@ function removeMessage(id) {
 // ─────────────────────────────────────────────────
 // Source Modal
 // ─────────────────────────────────────────────────
-function showSources(messageIndex) {
-    const messages = chatMessages.querySelectorAll('.assistant-message');
-    // Find the correct message by counting assistant messages only
-    let assistantIndex = 0;
-    for (const msg of chatMessages.children) {
-        if (msg.classList.contains('assistant-message') && !msg.classList.contains('loading')) {
-            if (assistantIndex === messageIndex - 1) {  // Adjust for welcome message
-                const sourcesData = msg.dataset.sources;
-                if (sourcesData) {
-                    currentSources = JSON.parse(sourcesData);
-                    renderSources();
-                    sourceModal.classList.add('active');
-                }
-                return;
-            }
-            assistantIndex++;
-        }
-    }
-}
-
 function renderSources() {
-    sourceList.innerHTML = currentSources.map((source, index) => `
+    sourceList.innerHTML = currentSources.map((source) => {
+        const page = source.page ? ` · p.${source.page}` : '';
+        const score = typeof source.score === 'number' ? ` · score ${source.score}` : '';
+        // 검증 가능한 인용: sha256 해시(축약)와 색인 시각을 함께 표시
+        const hash = source.content_hash
+            ? `<div class="source-item-meta">sha256: ${escapeHtml(source.content_hash.slice(0, 16))}…${source.ingested_at ? ' · indexed ' + escapeHtml(source.ingested_at) : ''}</div>`
+            : '';
+        return `
         <div class="source-item">
             <div class="source-item-header">
                 <span>📄</span>
-                <span>${escapeHtml(source.filename)}</span>
+                <span>${escapeHtml(source.filename)}${page}${score}</span>
             </div>
             <div class="source-item-content">${escapeHtml(source.content)}</div>
+            ${hash}
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function closeSourceModal() {
