@@ -6,6 +6,11 @@
   </p>
 </p>
 
+<!-- opendevs-badges:start -->
+[![CI](https://github.com/MosslandOpenDevs/mossland-nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/MosslandOpenDevs/mossland-nexus/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-64748b?style=flat)](LICENSE)
+<!-- opendevs-badges:end -->
+
 <p align="center">
   <a href="#overview">Overview</a> •
   <a href="#architecture">Architecture</a> •
